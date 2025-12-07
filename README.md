@@ -16,7 +16,7 @@ It delivers guaranteed-order, chunked message transmission with retry logic and 
 * **Overlay protocol on UDP:** Adds reliability primitives while keeping UDP’s stateless, connectionless semantics.
 * **Transparent chunking:** Automatically fragments and reassembles large payloads, avoiding MTU fragmentation issues.
 * **Per-chunk ACKs and configurable retries:** Increases delivery probability over lossy networks while remaining lightweight.
-* **Async producer/consumer buckets:** Separate `send_bucket` and `recv_bucket` queues support clean concurrency patterns.
+* **Async API for sending and receiving:** Direct methods for sending (`put_message`) and receiving (`get_message`) messages asynchronously.
 * **Minimal, extensible API:** Compact surface area for seamless embedding into existing `asyncio` applications or services.
 
 ---
@@ -28,10 +28,10 @@ UDP-Plus defines an **application-level protocol** that encodes control and data
 Each message is assigned a unique **operation ID** and split into fixed-size **chunks**.
 Receivers acknowledge each chunk; senders automatically retry unconfirmed chunks up to a configurable limit.
 
-The library exposes two non-blocking, asynchronous queues:
+The library provides direct async methods:
 
-* **Send queue** for outgoing packets
-* **Receive queue** for consumed messages
+* **`put_message`** for sending messages
+* **`get_message`** for receiving messages
 
 This design enables **event-driven** and **batch-processing** messaging models, suitable for everything from embedded devices to high-volume async pipelines.
 
