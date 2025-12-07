@@ -6,7 +6,7 @@ async def main():
     udp_plus = UDP_Plus('127.0.0.1', 25252)
     await udp_plus.start()
 
-    # Put a message to send inside send bucket
+    # Send a message directly using put_message
     await udp_plus.put_message('127.0.0.1', 25252, 'Hello, World!')
 
     # Wait for a message to be available in recv bucket

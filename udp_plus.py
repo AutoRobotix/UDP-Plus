@@ -1,16 +1,18 @@
 import asyncio
 import socket
+import base64
 import uuid
+import time
 import csv
 import io
 
 #TODO: rate limiter
-#TODO: pending operation cleaner -> move to failed operations
-#TODO: retry failed operations every n seconds
+#TODO: pending operation cleaner -> i transfer interrotti rimangono in pending_operations
+#TODO: pending+completed operation cleaner
 #TODO: op_id+ip pairing in pending operations and control
-#TODO: handle pending operations concurrency
 #TODO: use longer op_id
 #TODO: implement timestamps
+#TODO: what if uuid collides?
 
 CHUNK_SIZE = 512
 TRIES = 3
@@ -34,33 +36,34 @@ class UDP_Plus:
 
         # pending_operation = op_id : {'length': n, 'chunks_id': [chunk_id, ], 'chunks': [chunk, ], 'events': {'chunk_id': event}}
         self.pending_operations = {}
-        self.failed_operations = {}
-        self.messages = {}
+        self.completed_operations = []
+
+        self.loop = asyncio.get_running_loop()
 
         self._recv_task = None
         self._send_task = None
 
-        # recv_bucket = (sender_ip: str, message: str)
+        # recv_bucket = (sender_ip: str, message: str, timestamp: int)
         self.recv_bucket = asyncio.Queue()
-        # send_bucket = (target_ip: str, target_port: int, message: str)
-        self.send_bucket = asyncio.Queue()
+    #    # send_bucket = (target_ip: str, target_port: int, message: str)
+    #    self.send_bucket = asyncio.Queue()
+
+    #    self.fail_bucket = asyncio.Queue()
 
     ### --- Networking --- ###
 
     async def udp_receiver(self):
         """ Receive UDP packets and dispatch commands """
-        loop = asyncio.get_running_loop()
         while True:
-            data, address = await loop.sock_recvfrom(self.udp_sock, 1024)
+            data, address = await self.loop.sock_recvfrom(self.udp_sock, 1024)
             sender_ip, sender_port = address
             await self.message_handler(sender_ip, sender_port, data)
 
-    async def udp_transmitter(self):
-        """ Send UDP packets from the send bucket """
-        loop = asyncio.get_running_loop()
-        while True:
-            ip, port, data = await self.send_bucket.get()
-            await loop.sock_sendto(self.udp_sock, data, (ip, port))
+    #async def udp_transmitter(self):
+    #    """ Send UDP packets from the send bucket """
+    #    while True:
+    #        ip, port, data = await self.send_bucket.get()
+    #        await self.message_sender(ip, port, data)
 
     ### --- Message Handling --- ###
 
@@ -72,7 +75,8 @@ class UDP_Plus:
         op_id = packet[1]
         length = int(packet[2]) if packet[2] else 1
         chunk_id = str(packet[3]) if packet[3] else '0'
-        chunk = packet[4]
+        chunk = base64.b64decode(packet[4].encode()).decode()
+        timestamp = packet[5] if len(packet) > 5 else None
 
         if cmd == CMD_MESSAGE:
             # message
@@ -80,19 +84,13 @@ class UDP_Plus:
                 message = chunk
                 packet_response = [1, op_id, '', chunk_id, ''] 
                 await self.send_confirm(ip, port, packet_response)
-                # store in memory
-                if self.messages.get(ip):
-                    self.messages[ip].append(message)
-                else:
-                    self.messages[ip] = [message]
-
-                # push to receive bucket for external consumers
-                await self.recv_bucket.put((ip, message))
+                await self.recv_bucket.put((ip, message, timestamp))
+                #self.completed_operations.append(op_id)
 
             # long message
             else:
-                if not self.pending_operations.get(op_id):
-                    self.pending_operations[f'{op_id}'] = {'length': length, 'chunks_id': [chunk_id], 'chunks': [chunk], 'events': {}}    
+                if not self.pending_operations.get(op_id): # and op_id not in self.completed_operations:
+                    self.pending_operations[f'{op_id}'] = {'length': length, 'chunks_id': [chunk_id], 'chunks': [chunk], 'events': {}, 'timestamp': timestamp}
 
                 elif chunk_id not in self.pending_operations[f'{op_id}']['chunks_id']:
                     self.pending_operations[f'{op_id}']['chunks_id'].append(chunk_id)
@@ -101,16 +99,12 @@ class UDP_Plus:
                 packet_response = [1, op_id, '', chunk_id, '']
                 await self.send_confirm(ip, port, packet_response)
 
+                # if transfer is stopped before completion, the pending operation will remain !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 if len(self.pending_operations[f'{op_id}']['chunks_id']) == self.pending_operations[f'{op_id}']['length']:
                     message = self.recompose_message(op_id)
-                    if self.messages.get(ip):
-                        self.messages[ip].append(message)
-                    else:
-                        self.messages[ip] = [message]
 
-                    # push to receive bucket for external consumers
-                    await self.recv_bucket.put((ip, message))
-
+                    await self.recv_bucket.put((ip, message, timestamp))
+                    #self.completed_operations.append(op_id)
                     del self.pending_operations[f'{op_id}']
 
         elif cmd == CMD_CONFIRM:
@@ -120,46 +114,54 @@ class UDP_Plus:
                     del self.pending_operations[f'{op_id}']['events'][chunk_id]
 
     async def message_sender(self, ip, port, message):
+        message = base64.b64encode(message.encode()).decode()
         msg_size = len(message)
         op_id = uuid.uuid4().hex[:8]  # short operation ID
+        timestamp = time.time()
 
         if msg_size <= CHUNK_SIZE:
-            packet = ['', op_id, '', '', message]
-            self.pending_operations[op_id] = {'length': 1, 'chunks': [], 'chunks_id': [], 'events': {}}
-            await self.send_message(ip, port, packet)
+            packet = ['', op_id, '', '', message, timestamp] # timestamp
+            self.pending_operations[op_id] = {'length': 1, 'chunks': [], 'chunks_id': [], 'events': {}, 'timestamp': timestamp}
+            confirm = [await self.send_packet(ip, port, packet)]
                     
         else:
             total_chunks = (msg_size // CHUNK_SIZE) + (1 if msg_size % CHUNK_SIZE else 0)
-            self.pending_operations[op_id] = {'length': total_chunks, 'chunks': [], 'chunks_id': [], 'events': {}}
+            self.pending_operations[op_id] = {'length': total_chunks, 'chunks': [], 'chunks_id': [], 'events': {}, 'timestamp': timestamp} # 'timestamp': timestamp
 
-            multi_send_packet = [self.send_message(ip, port,  
-                                                  ['', op_id, total_chunks, i, message[i * CHUNK_SIZE : (i+1) * CHUNK_SIZE]],
+            confirm = [self.send_packet(ip, port,  
+                                                  ['', op_id, total_chunks, i, message[i * CHUNK_SIZE : (i+1) * CHUNK_SIZE], timestamp], # 'timestamp': timestamp
                                                   ) for i in range(total_chunks)]
-            await asyncio.gather(*multi_send_packet)
+            await asyncio.gather(*confirm)
 
         del self.pending_operations[op_id]
+        return all(confirm) # True if all chunks confirmed, False otherwise
 
     ### --- Utilities --- ###
 
-    async def send_message(self, ip, port, packet: list):  
+    async def send_packet(self, ip, port, packet: list):  
         op_id = packet[1]  
         chunk_id = str(packet[3]) if packet[3] else '0'
         self.pending_operations[op_id]['events'][chunk_id] = asyncio.Event()
         packet = self.dump_packet(packet)
 
         for i in range(TRIES):
-            await self.send_bucket.put((ip, port, packet))  
 
             try:
+                await self.loop.sock_sendto(self.udp_sock, packet, (ip, port))
                 await asyncio.wait_for(self.pending_operations[op_id]['events'][chunk_id].wait(), timeout=RETRY_TIME)
-                break
+                #break 
+                return True
             except:
-                if i+1 == TRIES:
-                    return # Transfer refused or peer unreachable
+                if i+1 == TRIES: # Transfer refused or peer unreachable
+                    #await self.fail_bucket.put((ip, port, packet))
+                    return False
                 
     async def send_confirm(self, ip, port, packet):
         packet = self.dump_packet(packet)
-        await self.send_bucket.put((ip, port, packet))  
+        try:
+            await self.loop.sock_sendto(self.udp_sock, packet, (ip, port))
+        except:
+            pass
 
     def dump_packet(self, packet: list):
         output = io.StringIO()
@@ -176,22 +178,25 @@ class UDP_Plus:
         """Concatenate text chunks (in order) and return string."""
         ordered = [self.pending_operations[op_id]['chunks'][self.pending_operations[op_id]['chunks_id'].index(str(i))] for i in range(self.pending_operations[op_id]['length'])]
         return "".join(ordered)
+    
+    def operation_cleaner(self):
+        pass
 
     ### --- Start & Stop --- ###
     
     async def start(self):
         self._recv_task = asyncio.create_task(self.udp_receiver())
-        self._send_task = asyncio.create_task(self.udp_transmitter())
+        #self._send_task = asyncio.create_task(self.udp_transmitter())
 
     def stop(self):
-        self.udp_sock.close()
         self._recv_task.cancel()
-        self._send_task.cancel()
+        #self._send_task.cancel()
+        self.udp_sock.close()
 
     ### --- API --- ###
 
     async def put_message(self, ip, port, message):
-        await self.message_sender(ip, port, message)
+        return await self.message_sender(ip, port, message)
 
     async def get_message(self):
         return await self.recv_bucket.get()
