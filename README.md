@@ -1,37 +1,83 @@
 # UDP-Plus
 
-UDP-Plus is a lightweight overlay protocol and Python toolkit that brings reliable, chunked messaging to raw UDP.
+**UDP-Plus** is a lightweight **overlay protocol** and **Python toolkit** that adds reliable, chunked messaging on top of raw UDP.
 
-Designed for embedded systems, low-latency services, and peer-to-peer utilities, UDP-Plus provides a pragmatic layer on top of UDP that
-adds chunking, per-chunk acknowledgements, and simple delivery guarantees while keeping the API small and fully asynchronous.
+Designed for **embedded systems**, **low-latency services**, and **peer-to-peer applications**, it introduces minimal reliability mechanisms—such as chunking and acknowledgements—while preserving UDP’s connectionless model and asynchronous efficiency.
 
-Key features
-- Overlay protocol on UDP: adds reliability primitives without replacing UDP's connectionless model.
-- Transparent chunking: automatically fragments and reassembles large payloads to avoid MTU issues.
-- Per-chunk ACKs and configurable retries: improves delivery probability on lossy networks while remaining lightweight.
-- Async producer/consumer buckets: separate send and receive queues (send_bucket, recv_bucket) for clean concurrency patterns.
-- Minimal, extensible API: small surface area to embed into existing asyncio applications or services.
+---
 
-Technical summary
-UDP-Plus implements an application-level protocol that encodes control and data fields into compact CSV-based packets. Each message is assigned
-an operation id and split into fixed-size chunks. Receivers acknowledge each chunk; senders retry missing chunks up to a configurable number
-of attempts. The implementation exposes two non-blocking queues for integration: a send queue for outgoing packets and a receive queue for
-consumed messages, enabling event-driven or batch-processing consumption models.
+## ⚙️ Overview
 
-Who should use it
-- Projects that need better-than-best-effort delivery but cannot or do not want to use TCP.
-- Systems requiring predictable, small-footprint async messaging over UDP (IoT devices, game servers, telemetry collectors).
+**UDP-Plus** provides a pragmatic reliability layer for UDP communication.
+It delivers guaranteed-order, chunked message transmission with retry logic and async integration, making it ideal for distributed or resource-constrained environments.
 
-Extensibility and integration
-The codebase was designed to be easy to extend: add authentication, encryption, or a stronger retransmission/backoff strategy by
-wrapping the packet-generation and send/confirm logic. The queues make it straightforward to integrate with worker pools or priority schedulers.
+### Key Features
 
-License
-Specify a license in the repository to make reuse and contribution terms explicit.
+* **Overlay protocol on UDP:** Adds reliability primitives while keeping UDP’s stateless, connectionless semantics.
+* **Transparent chunking:** Automatically fragments and reassembles large payloads, avoiding MTU fragmentation issues.
+* **Per-chunk ACKs and configurable retries:** Increases delivery probability over lossy networks while remaining lightweight.
+* **Async producer/consumer buckets:** Separate `send_bucket` and `recv_bucket` queues support clean concurrency patterns.
+* **Minimal, extensible API:** Compact surface area for seamless embedding into existing `asyncio` applications or services.
 
-Quick API
- - `put_message(ip: str, port: int, message: str)`
-	 - Enqueue a message to be sent to the target (non-blocking, async).
+---
 
- - `get_message()` -> `(sender_ip: str, message: str)`
-	 - Await a received message from the receive bucket (async).
+## 🧩 Technical Summary
+
+UDP-Plus defines an **application-level protocol** that encodes control and data fields into compact, CSV-formatted packets.
+
+Each message is assigned a unique **operation ID** and split into fixed-size **chunks**.
+Receivers acknowledge each chunk; senders automatically retry unconfirmed chunks up to a configurable limit.
+
+The library exposes two non-blocking, asynchronous queues:
+
+* **Send queue** for outgoing packets
+* **Receive queue** for consumed messages
+
+This design enables **event-driven** and **batch-processing** messaging models, suitable for everything from embedded devices to high-volume async pipelines.
+
+---
+
+## 🎯 Intended Use Cases
+
+Use **UDP-Plus** when you need:
+
+* **Better-than-best-effort delivery** without switching to TCP.
+* **Deterministic, small-footprint async messaging** for IoT, gaming, or telemetry.
+* **Custom UDP extensions** with minimal integration overhead.
+
+---
+
+## 🔧 Extensibility & Integration
+
+The codebase is designed for **easy extension and customization**.
+You can enhance the protocol by:
+
+* Adding **authentication** or **encryption** layers
+* Implementing a **stronger retransmission/backoff strategy**
+* Wrapping the **packet generation**, **send**, or **confirm** logic
+
+The modular queue system makes it straightforward to integrate UDP-Plus into worker pools, schedulers, or message routers.
+
+---
+
+## 🧰 Quick API Reference
+
+```python
+await put_message(ip: str, port: int, message: str)
+```
+
+Enqueue a message to be sent to the target (non-blocking, async).
+
+```python
+sender_ip, message = await get_message()
+```
+
+Await and retrieve a received message from the receive bucket.
+
+---
+
+**UDP-Plus**
+Reliable messaging over UDP — simplified.
+
+> A pragmatic bridge between UDP’s speed and TCP’s reliability.
+
